@@ -103,7 +103,8 @@ def count_parameters(model):
     return num_parameters/1e6 # in terms of millions
 
 # make the datasets
-XRayTrain_dataset = XRaysTrainDataset(data_dir, transform = config.transform)
+indices = list(range(86336))
+XRayTrain_dataset = XRaysTrainDataset(data_dir, transform = config.transform, indices=indices)
 # XRayTrain_dataset = ChestXLoader(list(range(30000)))
 # GANTrain_dataset = GANData()
 
@@ -208,10 +209,11 @@ if not args.test: # training
         print('\ntraining from scratch')
         # import pretrained model
         model = models.resnet50(pretrained=True) # pretrained = False bydefault
-        # model = ResNet50.resnet56()
+        # model = models.efficientnet_b0(pretrained=True)
         # change the last linear layer
         num_ftrs = model.fc.in_features
         model.fc = nn.Linear(num_ftrs, 14) # 15 output classes 
+        # model.classifier[1] = nn.Linear(in_features=1280, out_features=14)
         model.to(device)
         
         print('----- STAGE 1 -----') # only training 'layer2', 'layer3', 'layer4' and 'fc'
@@ -220,7 +222,7 @@ if not args.test: # training
             if ('layer2' in name) or ('layer3' in name) or ('layer4' in name) or ('fc' in name):
                 param.requires_grad = True 
             else:
-                param.requires_grad = False
+                param.requires_grad = True
 
         # since we are not resuming the training of the model
         epochs_till_now = 0
@@ -275,7 +277,7 @@ if (not args.test) and (args.resume):
             if ('layer2' in name) or ('layer3' in name) or ('layer4' in name) or ('fc' in name):
                 param.requires_grad = True 
             else:
-                param.requires_grad = False
+                param.requires_grad = True
 
     elif stage == 2:
 
@@ -332,12 +334,12 @@ for i in range(10):
     weight = fit(device, XRayTrain_dataset, train_loader, val_loader,    
                                         test_loader, model, loss_fn, 
                                         optimizer, losses_dict,
-                                        epochs_till_now = epochs_till_now, epochs = 3,
+                                        epochs_till_now = epochs_till_now, epochs = 1,
                                         log_interval = 25, save_interval = 1,
                                         lr = lr, bs = batch_size, stage = stage,
                                         test_only = args.test)
 
-    torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/Label_Location_Changed.pth')
+    torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/Model_All_Data.pth')
     model.load_state_dict(weight)
 
     fit(device, XRayTrain_dataset, train_loader, val_loader,    

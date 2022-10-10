@@ -227,8 +227,8 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
         target = target.float().to(device)
         
         optimizer.zero_grad()    
-        t_feats, out = model.extract_feature(img)
-        # out = model(img)  
+        # t_feats, out = model.extract_feature(img)
+        out = model(img)  
         loss = loss_fn(out, target)
         # sig_out = sigmoid(out)
         # loss = loss_fn(sig_out, target)
@@ -248,20 +248,20 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
         loss.backward()
         optimizer.step()
 
-        if algorithm == 'FedAlign':
-            loss_CE = loss.item()
+        # if algorithm == 'FedAlign':
+        #     loss_CE = loss.item()
 
-            t = t_feats[-2].detach()
-            x2 = t[:, :make_divisible(t.shape[1]*0.25)] # 마지막 에서 두번 째 블록
-            x3 = model.layer4(t).detach()
-            s_feats = [x2, x3]
-            # s_feats = model.reuse_feature(t)
-            TM_s = torch.bmm(transmitting_matrix(s_feats[-2], s_feats[-1]), transmitting_matrix(s_feats[-2], s_feats[-1]).transpose(2,1)) # small block
-            TM_t = torch.bmm(transmitting_matrix(t_feats[-2].detach(), t_feats[-1].detach()), transmitting_matrix(t_feats[-2].detach(), t_feats[-1].detach()).transpose(2,1)) # big block
-            loss = F.mse_loss(top_eigenvalue(K=TM_s), top_eigenvalue(K=TM_t))
-            loss = 0.45*(loss_CE/loss.item())*loss
-            loss.requires_grad_(True)
-            loss.backward()
+        #     t = t_feats[-2].detach()
+        #     x2 = t[:, :make_divisible(t.shape[1]*0.25)] # 마지막 에서 두번 째 블록
+        #     x3 = model.layer4(t).detach()
+        #     s_feats = [x2, x3]
+        #     # s_feats = model.reuse_feature(t)
+        #     TM_s = torch.bmm(transmitting_matrix(s_feats[-2], s_feats[-1]), transmitting_matrix(s_feats[-2], s_feats[-1]).transpose(2,1)) # small block
+        #     TM_t = torch.bmm(transmitting_matrix(t_feats[-2].detach(), t_feats[-1].detach()), transmitting_matrix(t_feats[-2].detach(), t_feats[-1].detach()).transpose(2,1)) # big block
+        #     loss = F.mse_loss(top_eigenvalue(K=TM_s), top_eigenvalue(K=TM_t))
+        #     loss = 0.45*(loss_CE/loss.item())*loss
+        #     loss.requires_grad_(True)
+        #     loss.backward()
         
         if (batch_idx+1)%log_interval == 0:
             # batch metric evaluation

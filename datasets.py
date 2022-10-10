@@ -131,7 +131,7 @@ class ChestXTestLoader(Dataset):
     def __init__(self):
 
         self.df = pd.read_csv('C:/Users/hb/Desktop/code/2.TF_to_Torch/Data/test_df.csv')
-        self.disease_cnt = [0]*15
+        self.disease_cnt = [0]*14
 
         ### Need to be editted
         for i in range(len(self.df.index)):
@@ -298,7 +298,7 @@ class XRaysTestDataset(Dataset):
         return len(self.test_df)
 
 class XRaysTrainDataset(Dataset):
-    def __init__(self, data_dir, transform = None):
+    def __init__(self, data_dir, transform = None, indices=None):
         self.data_dir = data_dir
 
         self.transform = transform
@@ -330,6 +330,8 @@ class XRaysTrainDataset(Dataset):
             # print('self.train_val_df.shape: {}'.format(self.train_val_df.shape))
 
         self.the_chosen, self.all_classes, self.all_classes_dict = self.choose_the_indices()
+        ### sample indices
+        self.the_chosen = indices
     
         if not os.path.exists(os.path.join(config.pkl_dir_path, config.disease_classes_pkl_path)):
             # pickle dump the classes list
@@ -340,7 +342,9 @@ class XRaysTrainDataset(Dataset):
             pass
             # print('\n{}: already exists'.format(config.disease_classes_pkl_path))
 
-        self.new_df = self.train_val_df.iloc[self.the_chosen, :] # this is the sampled train_val data
+        # self.new_df = self.train_val_df.iloc[self.the_chosen, :] # this is the sampled train_val data
+        # Do not sample the training data
+        self.new_df = self.train_val_df
 
         self.disease_cnt = [0]*15
 
@@ -369,7 +373,7 @@ class XRaysTrainDataset(Dataset):
                                           class, size (num_classes)
         """    
         # total number of patients (rows)
-        labels = self.train_val_df
+        labels = self.train_val_df ## What is the shape of this???
         N = labels.shape[0]
         positive_frequencies = (labels.sum(axis = 0))/N
         negative_frequencies = 1.0 - positive_frequencies
@@ -378,7 +382,9 @@ class XRaysTrainDataset(Dataset):
 
     def resample(self):
         self.the_chosen, self.all_classes, self.all_classes_dict = self.choose_the_indices()
-        self.new_df = self.train_val_df.iloc[self.the_chosen, :]
+        # self.new_df = self.train_val_df.iloc[self.the_chosen, :]
+        self.new_df = self.train_val_df
+
         # print('\nself.all_classes_dict: {}'.format(self.all_classes_dict))
 
     def make_pkl_dir(self, pkl_dir_path):
