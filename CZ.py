@@ -35,7 +35,7 @@ class weighted_loss():
         self.pos_weights = pos_weights
         self.neg_weights = neg_weights
 
-    def __call__(self, y_true, y_pred, epsilon=1e-7):
+    def __call__(self, y_pred, y_true, epsilon=1e-7):
         """
         Return weighted loss value. 
 
@@ -51,8 +51,8 @@ class weighted_loss():
         
         for i in range(len(self.pos_weights)):
             # for each class, add average weighted loss for that class 
-            loss_pos =  torch.mean(self.pos_weights[i] * y_true[:, i] * torch.log(sigmoid(y_pred[:, i]) + epsilon))
-            loss_neg =  torch.mean(self.neg_weights[i] * (1 - y_true[:, i]) * torch.log(1 - sigmoid(y_pred[:, i]) + epsilon))
+            loss_pos =  -1 * torch.mean(self.pos_weights[i] * y_true[:, i] * torch.log(sigmoid(y_pred[:, i]) + epsilon))
+            loss_neg =  -1 * torch.mean(self.neg_weights[i] * (1 - y_true[:, i]) * torch.log(1 -sigmoid( y_pred[:, i]) + epsilon))
             loss += loss_pos + loss_neg
         return loss
 
@@ -103,21 +103,23 @@ def count_parameters(model):
     return num_parameters/1e6 # in terms of millions
 
 # make the datasets
-indices = list(range(86336))
+indices = list(range(30000))
 XRayTrain_dataset = XRaysTrainDataset(data_dir, transform = config.transform, indices=indices)
 # XRayTrain_dataset = ChestXLoader(list(range(30000)))
 # GANTrain_dataset = GANData()
 
-# ori_ds_cnt = XRayTrain_dataset.get_ds_cnt()
+ori_ds_cnt = XRayTrain_dataset.get_ds_cnt()
 # gan_ds_cnt = GANTrain_dataset.get_ds_cnt()
 
 # total_ds_cnt = np.array(ori_ds_cnt) + np.array(gan_ds_cnt)
+total_ds_cnt = np.array(ori_ds_cnt)
+print(total_ds_cnt)
 
-# pos_freq = total_ds_cnt / total_ds_cnt.sum()
-# neg_freq = 1 - pos_freq
+pos_freq = total_ds_cnt / total_ds_cnt.sum()
+neg_freq = 1 - pos_freq
 
-# pos_weights = neg_freq
-# neg_weights = pos_freq
+pos_weights = neg_freq
+neg_weights = pos_freq
 
 # Plot the disease distribution
 # plt.figure(figsize=(8,4))
@@ -197,7 +199,7 @@ if args.loss_func == 'FocalLoss': # by default
 elif args.loss_func == 'BCE':
     loss_fn = nn.BCEWithLogitsLoss().to(device)
 
-# loss_fn = weighted_loss(pos_weights, neg_weights)
+loss_fn = weighted_loss(pos_weights, neg_weights)
 
 # define the learning rate
 lr = args.lr
@@ -208,12 +210,13 @@ if not args.test: # training
     if not args.resume:
         print('\ntraining from scratch')
         # import pretrained model
-        model = models.resnet50(pretrained=True) # pretrained = False bydefault
-        # model = models.efficientnet_b0(pretrained=True)
+        # model = models.resnet50(pretrained=True) # pretrained = False bydefault
+        model = models.efficientnet_b0(pretrained=True)
         # change the last linear layer
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 14) # 15 output classes 
-        # model.classifier[1] = nn.Linear(in_features=1280, out_features=14)
+        # num_ftrs = model.fc.in_features
+        # model.fc = nn.Linear(num_ftrs, 14) # 15 output classes 
+        num_ftrs = model.classifier[1].in_features
+        model.classifier[1] = nn.Linear(in_features=num_ftrs, out_features=14)
         model.to(device)
         
         print('----- STAGE 1 -----') # only training 'layer2', 'layer3', 'layer4' and 'fc'
@@ -327,10 +330,10 @@ optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr
 
 # make changes in the parameters of the following 'fit' function
 
-# model.load_state_dict(torch.load('C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/Normal.pth'))
+# model.load_state_dict(torch.load('C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/EfficientNetB0.pth'))
 
 for i in range(10):
-
+    print("Epoch {}".format(i))
     weight = fit(device, XRayTrain_dataset, train_loader, val_loader,    
                                         test_loader, model, loss_fn, 
                                         optimizer, losses_dict,
@@ -339,7 +342,7 @@ for i in range(10):
                                         lr = lr, bs = batch_size, stage = stage,
                                         test_only = args.test)
 
-    torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/Model_All_Data.pth')
+    torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/EfficientNetB0_Weighted_Loss.pth')
     model.load_state_dict(weight)
 
     fit(device, XRayTrain_dataset, train_loader, val_loader,    

@@ -342,17 +342,19 @@ class XRaysTrainDataset(Dataset):
             pass
             # print('\n{}: already exists'.format(config.disease_classes_pkl_path))
 
-        # self.new_df = self.train_val_df.iloc[self.the_chosen, :] # this is the sampled train_val data
+        self.new_df = self.train_val_df.iloc[self.the_chosen, :] # this is the sampled train_val data
         # Do not sample the training data
-        self.new_df = self.train_val_df
+        # self.new_df = self.train_val_df
 
-        self.disease_cnt = [0]*15
+        self.disease_cnt = [0]*14
 
         for i in range(len(self.new_df)):
             row = self.new_df.iloc[i, :]
             labels = str.split(row['Finding Labels'], '|')
-            for lab in labels:
+            for lab in labels:  
                 lab_idx = self.all_classes.index(lab)
+                if lab_idx == 14: # No Finding
+                    continue
                 self.disease_cnt[lab_idx] += 1
 
     def get_ds_cnt(self):

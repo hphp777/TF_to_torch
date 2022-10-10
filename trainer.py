@@ -273,7 +273,7 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
 
             batch_time = time.time() - start_time
             m, s = divmod(batch_time, 60)
-            print('Train Loss for batch {}/{} @epoch{}/{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(train_loader)).zfill(3), epochs_till_now, final_epoch, round(loss_ori.item() + loss.item(), 5), int(m), round(s, 2)))
+            print('Train Loss for batch {}/{} @epoch{}/{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(train_loader)).zfill(3), epochs_till_now, final_epoch, round(loss.item(), 5), int(m), round(s, 2)))
         
         start_time = time.time()
 
