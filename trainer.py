@@ -203,7 +203,7 @@ def make_divisible(v, divisor=8, min_value=1):
         new_v += divisor
     return new_v
 
-def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now, final_epoch, log_interval, algorithm = None):
+def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now, log_interval, algorithm = None):
     '''
     Takes in the data from the 'train_loader', calculates the loss over it using the 'loss_fn' 
     and optimizes the 'model' using the 'optimizer'  
@@ -225,6 +225,9 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
 
         img = img.to(device)
         target = target.float().to(device)
+
+        if torch.sum(target) == 0:
+            continue
         
         optimizer.zero_grad()    
         # t_feats, out = model.extract_feature(img)
@@ -273,7 +276,7 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
 
             batch_time = time.time() - start_time
             m, s = divmod(batch_time, 60)
-            print('Train Loss for batch {}/{} @epoch{}/{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(train_loader)).zfill(3), epochs_till_now, final_epoch, round(loss.item(), 5), int(m), round(s, 2)))
+            print('Train Loss for batch {}/{} @epoch{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(train_loader)).zfill(3), epochs_till_now, round(loss.item(), 5), int(m), round(s, 2)))
         
         start_time = time.time()
 
@@ -281,7 +284,7 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
             
     return train_loss_list, running_train_loss/float(len(train_loader.dataset))
 
-def val_epoch(device, val_loader, model, loss_fn, epochs_till_now = None, final_epoch = None, log_interval = 1, test_only = False):
+def val_epoch(device, val_loader, model, loss_fn, epochs_till_now = None, log_interval = 1, test_only = False):
     '''
     It essentially takes in the val_loader/test_loader, the model and the loss function and evaluates
     the loss and the ROC AUC score for all the data in the dataloader.
@@ -343,7 +346,7 @@ def val_epoch(device, val_loader, model, loss_fn, epochs_till_now = None, final_
 
                 batch_time = time.time() - batch_start_time
                 m, s = divmod(batch_time, 60)
-                print('Val Loss   for batch {}/{} @epoch{}/{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(val_loader)).zfill(3), epochs_till_now, final_epoch, round(loss.item(), 5), int(m), round(s, 2)))
+                print('Val Loss   for batch {}/{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(val_loader)).zfill(3), round(loss.item(), 5), int(m), round(s, 2)))
             
             batch_start_time = time.time()  
             total_target+= targets.tolist()
@@ -356,18 +359,16 @@ def val_epoch(device, val_loader, model, loss_fn, epochs_till_now = None, final_
 
     return val_loss_list, running_val_loss/float(len(val_loader.dataset)), roc_auc, accuracy
 
-def fit(device, XRayTrain_dataset, train_loader, val_loader, test_loader, model,
+def fit(device, train_loader, val_loader, test_loader, model,
                                          loss_fn, optimizer, losses_dict,
-                                         epochs_till_now, epochs, 
+                                         epochs_till_now, 
                                          log_interval, save_interval, 
-                                         lr, bs, stage, test_only = False, c_num = None):
+                                         test_only = False, c_num = None):
     '''
     Trains or Tests the 'model' on the given 'train_loader', 'val_loader', 'test_loader' for 'epochs' number of epochs.
     If training ('test_only' = False), it saves the optimized 'model' and  the loss plots ,after every 'save_interval'th epoch.
     '''
     epoch_train_loss, epoch_val_loss, total_train_loss_list, total_val_loss_list = losses_dict['epoch_train_loss'], losses_dict['epoch_val_loss'], losses_dict['total_train_loss_list'], losses_dict['total_val_loss_list']
-
-    final_epoch = epochs_till_now + epochs
 
     if test_only:
         print('\n======= Testing... =======\n')
@@ -387,53 +388,30 @@ def fit(device, XRayTrain_dataset, train_loader, val_loader, test_loader, model,
     
     # total_train_loss_list = []
     # total_val_loss_list = []
-
-    for epoch in range(epochs):
-
-        # if starting_epoch != epochs_till_now:
-        #     # resample the train_loader and val_loader
-        #     train_loader, val_loader = get_resampled_train_val_dataloaders(XRayTrain_dataset, config.transform, bs = bs)
-
-        epochs_till_now += 1
-        print('============ EPOCH {}/{} ============'.format(epochs_till_now, final_epoch))
-        epoch_start_time = time.time()
+    epoch_start_time = time.time()
         
-        print('TRAINING')
-        train_loss, mean_running_train_loss          =  train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now, final_epoch, log_interval)
-        print('VALIDATION')
-        val_loss, mean_running_val_loss, roc_auc, val_acc     =  val_epoch(device, val_loader, model, loss_fn                             , epochs_till_now, final_epoch, log_interval)
+    print('TRAINING')
+    train_loss, mean_running_train_loss = train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now, log_interval)
+    print('VALIDATION')
+    val_loss, mean_running_val_loss, roc_auc, val_acc = val_epoch(device, val_loader, model, loss_fn, epochs_till_now, log_interval)
         
-        epoch_train_loss.append(mean_running_train_loss)
-        epoch_val_loss.append(mean_running_val_loss)
+    epoch_train_loss.append(mean_running_train_loss)
+    epoch_val_loss.append(mean_running_val_loss)
 
-        total_train_loss_list.extend(train_loss)
-        total_val_loss_list.extend(val_loss)
+    total_train_loss_list.extend(train_loss)
+    total_val_loss_list.extend(val_loss)
 
-        save_name = 'C{}_stage{}_{}'.format(c_num,stage, str.split(str(lr), '.')[-1])
+    save_name = 'temp.pth'
 
-        # the follwoing piece of codw needs to be worked on !!! LATEST DEVELOPMENT TILL HERE
-        if ((epoch+1)%save_interval == 0) or test_only:
-            save_path = os.path.join(config.models_dir, '{}.pth'.format(save_name))
-            
-            torch.save({
-            'epochs': epochs_till_now,
-            'model': model, # it saves the whole model
-            'losses_dict': {'epoch_train_loss': epoch_train_loss, 'epoch_val_loss': epoch_val_loss, 'total_train_loss_list': total_train_loss_list, 'total_val_loss_list': total_val_loss_list}
-            }, save_path)
+    # the follwoing piece of codw needs to be worked on !!! LATEST DEVELOPMENT TILL HERE
+    print('\nTRAIN LOSS : {}'.format(mean_running_train_loss))
+    print('VAL   LOSS : {}'.format(mean_running_val_loss))
+    print('VAL ROC_AUC: {}'.format(roc_auc))
 
-            print('\ncheckpoint {} saved'.format(save_path))
-
-            # make_plot(epoch_train_loss, epoch_val_loss, total_train_loss_list, total_val_loss_list, save_name)
-            print('loss plots saved !!!')
-
-        print('\nTRAIN LOSS : {}'.format(mean_running_train_loss))
-        print('VAL   LOSS : {}'.format(mean_running_val_loss))
-        print('VAL ROC_AUC: {}'.format(roc_auc))
-
-        total_epoch_time = time.time() - epoch_start_time
-        m, s = divmod(total_epoch_time, 60)
-        h, m = divmod(m, 60)
-        print('\nEpoch {}/{} took {} h {} m'.format(epochs_till_now, final_epoch, int(h), int(m)))
+    total_epoch_time = time.time() - epoch_start_time
+    m, s = divmod(total_epoch_time, 60)
+    h, m = divmod(m, 60)
+    print('\nEpoch {} took {} h {} m'.format(epochs_till_now,int(h), int(m)))
 
     return model.state_dict()
 

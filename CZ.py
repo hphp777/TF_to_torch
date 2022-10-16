@@ -6,13 +6,15 @@ import pandas as pd
 from tqdm import tqdm
 import cv2
 import matplotlib.pyplot as plt
+import random
 
 import torch
 import torch.nn as nn
 import torchvision.models as models 
+from torch.optim.lr_scheduler import LambdaLR, StepLR, MultiStepLR, ExponentialLR
 
 # import custom dataset classes
-from datasets import ChestXLoader, ChestXTestLoader, XRaysTestDataset, XRaysTrainDataset
+from datasets import XRaysTestDataset, XRaysTrainDataset, GANLoader
 
 
 # import neccesary libraries for defining the optimizers
@@ -56,64 +58,66 @@ class weighted_loss():
             loss += loss_pos + loss_neg
         return loss
 
+def build_lrfn(lr_start=0.000002, lr_max=0.00010, 
+               lr_min=0, lr_rampup_epochs=8, 
+               lr_sustain_epochs=0, lr_exp_decay=.8):
+
+    def lrfn(epoch):
+        if epoch < lr_rampup_epochs:
+            optimizer.param_groups[0]['lr'] = (lr_max - lr_start) / lr_rampup_epochs * epoch + lr_start
+        elif epoch < lr_rampup_epochs + lr_sustain_epochs:
+            optimizer.param_groups[0]['lr'] = lr_max
+        else:
+            optimizer.param_groups[0]['lr'] = (lr_max - lr_min) *\
+                 lr_exp_decay**(epoch - lr_rampup_epochs\
+                                - lr_sustain_epochs) + lr_min
+        return optimizer.param_groups[0]['lr']
+    return lrfn
+
+def count_parameters(model): 
+    num_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return num_parameters/1e6 # in terms of millions
+
+test_auc_lst = []
+test_acc_lst = []
+
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 print(f'\ndevice: {device}')
     
+# making empty lists to collect all the losses
+losses_dict = {'epoch_train_loss': [], 'epoch_val_loss': [], 'total_train_loss_list': [], 'total_val_loss_list': []}
+
 parser = argparse.ArgumentParser(description='Following are the arguments that can be passed form the terminal itself ! Cool huh ? :D')
 parser.add_argument('--data_path', type = str, default = '.', help = 'This is the path of the training data')
-parser.add_argument('--bs', type = int, default = 32, help = 'batch size')
-parser.add_argument('--lr', type = float, default = 1e-5, help = 'Learning Rate for the optimizer')
-parser.add_argument('--stage', type = int, default = 1, help = 'Stage, it decides which layers of the Neural Net to train')
+parser.add_argument('--bs', type = int, default = 64, help = 'batch size')
 parser.add_argument('--loss_func', type = str, default = 'FocalLoss', choices = {'BCE', 'FocalLoss'}, help = 'loss function')
 parser.add_argument('-r','--resume', default = False ,action = 'store_true') # args.resume will return True if -r or --resume is used in the terminal
 parser.add_argument('--ckpt', type = str, help = 'Path of the ckeckpoint that you wnat to load')
 parser.add_argument('-t','--test', action = 'store_true')   # args.test   will return True if -t or --test   is used in the terminal
 args = parser.parse_args()
-disease = ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion', 'Emphysema', 'Fibrosis', 'Hernia', 'Infiltration', 'Mass', 'No Finding', 'Nodule', 'Pleural_Thickening', 'Pneumonia', 'Pneumothorax']
-
+disease = ['Cardiomegaly','Emphysema','Effusion','Hernia','Infiltration','Mass','Nodule','Atelectasis','Pneumothorax','Pleural_Thickening','Pneumonia','Fibrosis','Edema','Consolidation']
 args.ckpt = 'C:/Users/hb/Desktop/code/FL_distribution_skew/models/stage4_1e-05_12.pth'
-
-args.test = False
-
-if args.resume and args.test: # what if --test is not defiend at all ? test case hai ye ek
-    q('The flow of this code has been designed either to train the model or to test it.\nPlease choose either --resume or --test')
-
-stage = args.stage
-if not args.resume:
-    print(f'\nOverwriting stage to 1, as the model training is being done from scratch')
-    stage = 1
-    
-if args.test:
-    print('TESTING THE MODEL')
-else:
-    if args.resume:
-        print('RESUMING THE MODEL TRAINING')
-    else:
-        print('TRAINING THE MODEL FROM SCRATCH')
 
 script_start_time = time.time() # tells the total run time of this script
 
 # mention the path of the data
 data_dir = "C:/Users/hb/Desktop/data/archive"
-#os.path.join('data',args.data_path) # Data_Entry_2017.csv should be present in the mentioned path
-
-# define a function to count the total number of trainable parameters
-def count_parameters(model): 
-    num_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return num_parameters/1e6 # in terms of millions
 
 # make the datasets
-indices = list(range(30000))
+# random sampling
+indices = list(range(86336))
+
 XRayTrain_dataset = XRaysTrainDataset(data_dir, transform = config.transform, indices=indices)
 # XRayTrain_dataset = ChestXLoader(list(range(30000)))
-# GANTrain_dataset = GANData()
+# GANTrain_dataset = GANLoader()
+# Total_dataset = torch.utils.data.ConcatDataset([XRayTrain_dataset, GANTrain_dataset])
 
 ori_ds_cnt = XRayTrain_dataset.get_ds_cnt()
 # gan_ds_cnt = GANTrain_dataset.get_ds_cnt()
 
 # total_ds_cnt = np.array(ori_ds_cnt) + np.array(gan_ds_cnt)
 total_ds_cnt = np.array(ori_ds_cnt)
-print(total_ds_cnt)
+# print(total_ds_cnt)
 
 pos_freq = total_ds_cnt / total_ds_cnt.sum()
 neg_freq = 1 - pos_freq
@@ -122,15 +126,15 @@ pos_weights = neg_freq
 neg_weights = pos_freq
 
 # Plot the disease distribution
-# plt.figure(figsize=(8,4))
-# plt.title('Disease Distribution', fontsize=20)
-# plt.bar(disease,total_ds_cnt)
-# plt.tight_layout()
-# plt.gcf().subplots_adjust(bottom=0.40)
-# plt.xticks(rotation = 90)
-# plt.xlabel('Deseases')
-# plt.savefig('disease_distribution.png')
-# plt.clf()
+plt.figure(figsize=(8,4))
+plt.title('Disease Distribution', fontsize=20)
+plt.bar(disease,total_ds_cnt)
+plt.tight_layout()
+plt.gcf().subplots_adjust(bottom=0.40)
+plt.xticks(rotation = 90)
+plt.xlabel('Deseases')
+plt.savefig('disease_distribution.png')
+plt.clf()
 
 #Plot the pos neg balancing
 bar_width = 0.25
@@ -157,12 +161,11 @@ x = np.arange(len(disease))
 train_percentage = 0.8
 train_dataset, val_dataset = torch.utils.data.random_split(XRayTrain_dataset, [int(len(XRayTrain_dataset)*train_percentage), len(XRayTrain_dataset)-int(len(XRayTrain_dataset)*train_percentage)])
 
-
 XRayTest_dataset = XRaysTestDataset(data_dir, transform = config.transform)
 # XRayTest_dataset = ChestXTestLoader()
 # XRayTest_dataset = ChestXLoader(mode = 'test')
 
-print('\n-----Initial Dataset Information-----')
+print('\n-----Dataset Information-----')
 print('num images in train_dataset   : {}'.format(len(train_dataset)))
 print('num images in val_dataset     : {}'.format(len(val_dataset)))
 print('num images in XRayTest_dataset: {}'.format(len(XRayTest_dataset)))
@@ -175,23 +178,6 @@ val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = batch_size, s
 test_loader = torch.utils.data.DataLoader(XRayTest_dataset, batch_size = batch_size, shuffle = not True)
 # train2_loader = torch.utils.data.DataLoader(GANTrain_dataset, batch_size = batch_size, shuffle = not True)
 
-print('\n-----Initial Batchloaders Information -----')
-print('num batches in train_loader: {}'.format(len(train_loader)))
-print('num batches in val_loader  : {}'.format(len(val_loader)))
-print('num batches in test_loader : {}'.format(len(test_loader)))
-print('-------------------------------------------')
-
-#  sanity check
-# if len(XRayTrain_dataset.all_classes) != 15: # 15 is the unique number of diseases in this dataset
-#     q('\nnumber of classes not equal to 15 !')
-
-a,b = train_dataset[0]
-print('\nwe are working with \nImages shape: {} and \nTarget shape: {}'.format( a.shape, b.shape))
-
-# make models directory, where the models and the loss plots will be saved
-if not os.path.exists(config.models_dir):
-    os.mkdir(config.models_dir)
-
 # define the loss function
 if args.loss_func == 'FocalLoss': # by default
     from losses import FocalLoss
@@ -201,117 +187,18 @@ elif args.loss_func == 'BCE':
 
 loss_fn = weighted_loss(pos_weights, neg_weights)
 
-# define the learning rate
-lr = args.lr
+# import pretrained model
+# model = models.resnet50(pretrained=True) # pretrained = False bydefault
+model = models.efficientnet_b1(pretrained=True)
+# change the last linear layer
+# num_ftrs = model.fc.in_features
+# model.fc = nn.Linear(num_ftrs, 14) # 15 output classes 
+num_ftrs = model.classifier[1].in_features
+model.classifier[1] = nn.Linear(in_features=num_ftrs, out_features=14)
+model.to(device)
 
-if not args.test: # training
-
-    # initialize the model if not args.resume
-    if not args.resume:
-        print('\ntraining from scratch')
-        # import pretrained model
-        # model = models.resnet50(pretrained=True) # pretrained = False bydefault
-        model = models.efficientnet_b0(pretrained=True)
-        # change the last linear layer
-        # num_ftrs = model.fc.in_features
-        # model.fc = nn.Linear(num_ftrs, 14) # 15 output classes 
-        num_ftrs = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features=num_ftrs, out_features=14)
-        model.to(device)
-        
-        print('----- STAGE 1 -----') # only training 'layer2', 'layer3', 'layer4' and 'fc'
-        for name, param in model.named_parameters(): # all requires_grad by default, are True initially
-            # print('{}: {}'.format(name, param.requires_grad)) # this shows True for all the parameters  
-            if ('layer2' in name) or ('layer3' in name) or ('layer4' in name) or ('fc' in name):
-                param.requires_grad = True 
-            else:
-                param.requires_grad = True
-
-        # since we are not resuming the training of the model
-        epochs_till_now = 0
-
-        # making empty lists to collect all the losses
-        losses_dict = {'epoch_train_loss': [], 'epoch_val_loss': [], 'total_train_loss_list': [], 'total_val_loss_list': []}
-
-    else:
-        if args.ckpt == None:
-            q('ERROR: Please select a valid checkpoint to resume from')
-            
-        print('\nckpt loaded: {}'.format(args.ckpt))
-        ckpt = torch.load(os.path.join(config.models_dir, args.ckpt)) 
-
-        # since we are resuming the training of the model
-        epochs_till_now = ckpt['epochs']
-        model = ckpt['model']
-        model.to(device)
-        
-        # loading previous loss lists to collect future losses
-        losses_dict = ckpt['losses_dict']
-
-    # printing some hyperparameters
-    print('\n> loss_fn: {}'.format(loss_fn))
-    print('> epochs_till_now: {}'.format(epochs_till_now))
-    print('> batch_size: {}'.format(batch_size))
-    print('> stage: {}'.format(stage))
-    print('> lr: {}'.format(lr))
-
-else: # testing
-    if args.ckpt == None:
-        q('ERROR: Please select a checkpoint to load the testing model from')
-        
-    print('\ncheckpoint loaded: {}'.format(args.ckpt))
-    ckpt = torch.load(os.path.join(config.models_dir, args.ckpt)) 
-
-    # since we are resuming the training of the model
-    epochs_till_now = ckpt['epochs']
-    model = ckpt['model']
-    
-    # loading previous loss lists to collect future losses
-    losses_dict = ckpt['losses_dict']
-
-# make changes(freezing/unfreezing the model's layers) in the following, for training the model for different stages 
-if (not args.test) and (args.resume):
-
-    if stage == 1:
-
-        print('\n----- STAGE 1 -----') # only training 'layer2', 'layer3', 'layer4' and 'fc'
-        for name, param in model.named_parameters(): # all requires_grad by default, are True initially
-            # print('{}: {}'.format(name, param.requires_grad)) # this shows True for all the parameters  
-            if ('layer2' in name) or ('layer3' in name) or ('layer4' in name) or ('fc' in name):
-                param.requires_grad = True 
-            else:
-                param.requires_grad = True
-
-    elif stage == 2:
-
-        print('\n----- STAGE 2 -----') # only training 'layer3', 'layer4' and 'fc'
-        for name, param in model.named_parameters(): 
-            # print('{}: {}'.format(name, param.requires_grad)) # this shows True for all the parameters  
-            if ('layer3' in name) or ('layer4' in name) or ('fc' in name):
-                param.requires_grad = True 
-            else:
-                param.requires_grad = False
-
-    elif stage == 3:
-
-        print('\n----- STAGE 3 -----') # only training  'layer4' and 'fc'
-        for name, param in model.named_parameters(): 
-            # print('{}: {}'.format(name, param.requires_grad)) # this shows True for all the parameters  
-            if ('layer4' in name) or ('fc' in name):
-                param.requires_grad = True 
-            else:
-                param.requires_grad = False
-
-    elif stage == 4:
-
-        print('\n----- STAGE 4 -----') # only training 'fc'
-        for name, param in model.named_parameters(): 
-            # print('{}: {}'.format(name, param.requires_grad)) # this shows True for all the parameters  
-            if ('fc' in name):
-                param.requires_grad = True 
-            else:
-                param.requires_grad = False
-
+for name, param in model.named_parameters(): # all requires_grad by default, are True initially  
+    param.requires_grad = True
 
 if not args.test:
     # checking the layers which are going to be trained (irrespective of args.resume)
@@ -321,55 +208,60 @@ if not args.test:
             layer_name = str.split(name, '.')[0]
             if layer_name not in trainable_layers: 
                 trainable_layers.append(layer_name)
+
     print('\nfollowing are the trainable layers...')
     print(trainable_layers)
+    print('\nwe have {} Million trainable parameters here in the {} model\n'.format(count_parameters(model), model.__class__.__name__))
 
-    print('\nwe have {} Million trainable parameters here in the {} model'.format(count_parameters(model), model.__class__.__name__))
-
-optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr = lr)
-
-# make changes in the parameters of the following 'fit' function
+optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr = 0)
+scheduler = build_lrfn()
 
 # model.load_state_dict(torch.load('C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/EfficientNetB0.pth'))
 
-for i in range(10):
-    print("Epoch {}".format(i))
-    weight = fit(device, XRayTrain_dataset, train_loader, val_loader,    
+round = 11
+best_auc = 0
+
+for i in range(1,round):
+
+    print('============ EPOCH {}/{} ============'.format(i, round-1))
+    lr = scheduler(i)
+    print("Learning Rate : ", lr)
+
+    weight = fit(device, train_loader, val_loader,    
                                         test_loader, model, loss_fn, 
                                         optimizer, losses_dict,
-                                        epochs_till_now = epochs_till_now, epochs = 1,
+                                        epochs_till_now = i,
                                         log_interval = 25, save_interval = 1,
-                                        lr = lr, bs = batch_size, stage = stage,
-                                        test_only = args.test)
+                                        test_only = False)
 
-    torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/EfficientNetB0_Weighted_Loss.pth')
+    
     model.load_state_dict(weight)
-
-    fit(device, XRayTrain_dataset, train_loader, val_loader,    
+    
+    test_auc, test_acc = fit(device, train_loader, val_loader,    
                                         test_loader, model, loss_fn, 
                                         optimizer, losses_dict,
-                                        epochs_till_now = epochs_till_now, epochs = 1,
+                                        epochs_till_now = i, 
                                         log_interval = 25, save_interval = 1,
-                                        lr = lr, bs = batch_size, stage = stage,
                                         test_only = True)
+
+    if test_auc > best_auc:
+        best_auc = test_auc
+        torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/CZ_final.pth')
+
+    test_acc_lst.append(test_acc)
+    test_auc_lst.append(test_auc)
 
 script_time = time.time() - script_start_time
 m, s = divmod(script_time, 60)
 h, m = divmod(m, 60)
 print('{} h {}m laga poore script me !'.format(int(h), int(m)))
 
-# ''' 
-# This is how the model is trained...
-# ##### STAGE 1 ##### FocalLoss lr = 1e-5
-# training layers = layer2, layer3, layer4, fc 
-# epochs = 2
-# ##### STAGE 2 ##### FocalLoss lr = 3e-4
-# training layers = layer3, layer4, fc 
-# epochs = 5
-# ##### STAGE 3 ##### FocalLoss lr = 7e-4
-# training layers = layer4, fc 
-# epochs = 4
-# ##### STAGE 4 ##### FocalLoss lr = 1e-3
-# training layers = fc 
-# epochs = 3
-# '''
+print("Best ACC: ", max(test_acc_lst))
+print("Best AUC: ", max(test_auc_lst))
+
+plt.plot(list(range(1,round)), test_acc_lst)
+plt.savefig("Accuracy.png")
+plt.clf()
+plt.plot(list(range(1,round)), test_auc_lst)
+plt.savefig("AUC.png")
+plt.clf()

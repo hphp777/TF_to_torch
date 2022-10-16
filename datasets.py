@@ -16,97 +16,10 @@ import csv
 import pandas as pd
 import config
  
-
-class ChestXLoader(Dataset):
+class GANLoader(Dataset):
     
     def ChestXdataloader(self, img):
 
-        # img = img
-
-        # if len(img.shape) == 2:
-        #     img = img[:, :, np.newaxis]
-        #     img = np.concatenate([img, img, img], axis=2)
-        # if len(img.shape)>2:
-        #     img = img[:,:,0]
-        #     img = img[:, :, np.newaxis]
-        #     img = np.concatenate([img, img, img], axis=2)
-        
-        # img = Image.fromarray(img)
-        
-        # Adaptive masking
-#         threshold = img.min() + (img.max() - img.min()) * 0.9
-#         img[img > threshold] = 0
-
-        # plt.imshow(img)
-        # plt.show()
-
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-        transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            # normalize
-        ])
-
-        img = transform(img)
-
-        return img
-
-    def __init__(self, indices):
-
-        self.df = pd.read_csv('C:/Users/hb/Desktop/code/2.TF_to_Torch/Data/train_val_df.csv')
-        self.disease_cnt = [0] * 14
-        self.indices = indices
-
-        for i in range(len(indices)):
-            row = self.df.loc[indices[i]]
-            for j in range(3,17):
-                if row[j] == 1:
-                    self.disease_cnt[j-3] += 1
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, index): # 여기에 들어가는 index는?
-        
-        label = []
-        row = self.df.loc[self.indices[index]]
-        img = cv2.imread(row[17])
-        
-        # plt.imshow(img)
-        # plt.show()
-
-        img = self.ChestXdataloader(img)
-        for i in range(3, 17):
-            label.append(row[i])
-        label = torch.tensor(label)
-        label = label.float()
-
-        # print(label)
-
-        return img, label
-
-    def get_ds_cnt(self):
-        return self.disease_cnt
-
-class ChestXTestLoader(Dataset):
-    
-    def ChestXdataloader(self, img):
-
-        # img = img
-
-        # if len(img.shape) == 2:
-        #     img = img[:, :, np.newaxis]
-        #     img = np.concatenate([img, img, img], axis=2)
-        # if len(img.shape)>2:
-        #     img = img[:,:,0]
-        #     img = img[:, :, np.newaxis]
-        #     img = np.concatenate([img, img, img], axis=2)
-        
-        # img = Image.fromarray(img)
-        
         # Adaptive masking
 #         threshold = img.min() + (img.max() - img.min()) * 0.9
 #         img[img > threshold] = 0
@@ -130,33 +43,34 @@ class ChestXTestLoader(Dataset):
 
     def __init__(self):
 
-        self.df = pd.read_csv('C:/Users/hb/Desktop/code/2.TF_to_Torch/Data/test_df.csv')
+        self.df1 = pd.read_csv('C:/Users/hb/Desktop/code/2.TF_to_Torch/Data/pggan_df.csv', index_col=0)
+        # self.df2 = pd.read_csv('C:/Users/hb/Desktop/code/2.TF_to_Torch/Data/pggan2_df.csv', index_col=0)
+        # self.df = pd.concat([self.df1, self.df2], ignore_index=True)
+        self.df = self.df1.iloc[:, :]
         self.disease_cnt = [0]*14
 
         ### Need to be editted
         for i in range(len(self.df.index)):
             row = self.df.loc[i]
-            for j in range(3,17):
+            for j in range(14):
                 if row[j] == 1:
-                    self.disease_cnt[j-3] += 1
+                    self.disease_cnt[j] += 1
 
     def __len__(self):
         return self.df.shape[0]
 
     def __getitem__(self, index): # 여기에 들어가는 index는?
-
         
-        
-        label = []
+        label = [0] * 14
         row = self.df.loc[index]
-        img = cv2.imread(row[17])
+        img = cv2.imread(row[14])
 
         # plt.imshow(img)
         # plt.show()
 
         img = self.ChestXdataloader(img)
-        for i in range(3, 17):
-            label.append(row[i])
+        for i in range(14):
+            label[i] = row[i]
         label = torch.tensor(label)
         label = label.float()
 
@@ -199,6 +113,20 @@ class XRaysTestDataset(Dataset):
                 self.test_df = pickle.load(handle)
             # print('\n{}: loaded'.format(config.test_df_pkl_path))
             # print('self.test_df.shape: {}'.format(self.test_df.shape))
+
+        self.disease_cnt = [0]*14
+        self.all_classes = ['Cardiomegaly','Emphysema','Effusion','Hernia','Infiltration','Mass','Nodule','Atelectasis','Pneumothorax','Pleural_Thickening','Pneumonia','Fibrosis','Edema','Consolidation', 'No Finding']
+        for i in range(len(self.test_df)):
+            row = self.test_df.iloc[i, :]
+            labels = str.split(row['Finding Labels'], '|')
+            for lab in labels:  
+                lab_idx = self.all_classes.index(lab)
+                if lab_idx == 14: # No Finding
+                    continue
+                self.disease_cnt[lab_idx] += 1
+
+    def get_ds_cnt(self):
+        return self.disease_cnt
 
     def __getitem__(self, index):
 
@@ -347,7 +275,7 @@ class XRaysTrainDataset(Dataset):
         # self.new_df = self.train_val_df
 
         self.disease_cnt = [0]*14
-
+        self.all_classes = ['Cardiomegaly','Emphysema','Effusion','Hernia','Infiltration','Mass','Nodule','Atelectasis','Pneumothorax','Pleural_Thickening','Pneumonia','Fibrosis','Edema','Consolidation', 'No Finding']
         for i in range(len(self.new_df)):
             row = self.new_df.iloc[i, :]
             labels = str.split(row['Finding Labels'], '|')
@@ -549,4 +477,4 @@ class XRaysTrainDataset(Dataset):
         return train_val_list
 
     def __len__(self):
-        return len(self.new_df)
+        return len(self.the_chosen)
