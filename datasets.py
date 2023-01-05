@@ -15,6 +15,9 @@ from matplotlib import pyplot as plt
 import csv
 import pandas as pd
 import config
+import PIL.Image as pilimg
+from multiprocessing import Pool
+
  
 class GANLoader(Dataset):
     
@@ -226,9 +229,11 @@ class XRaysTestDataset(Dataset):
         return len(self.test_df)
 
 class XRaysTrainDataset(Dataset):
-    def __init__(self, data_dir, transform = None, indices=None):
-        self.data_dir = data_dir
 
+    def __init__(self, data_dir, transform = None, indices=None):
+
+        self.data_dir = data_dir
+        self.extreme = False
         self.transform = transform
         # print('self.data_dir: ', self.data_dir)
 
@@ -271,11 +276,29 @@ class XRaysTrainDataset(Dataset):
             # print('\n{}: already exists'.format(config.disease_classes_pkl_path))
 
         self.new_df = self.train_val_df.iloc[self.the_chosen, :] # this is the sampled train_val data
+        self.new_df = self.new_df.reset_index()
         # Do not sample the training data
         # self.new_df = self.train_val_df
 
         self.disease_cnt = [0]*14
         self.all_classes = ['Cardiomegaly','Emphysema','Effusion','Hernia','Infiltration','Mass','Nodule','Atelectasis','Pneumothorax','Pleural_Thickening','Pneumonia','Fibrosis','Edema','Consolidation', 'No Finding']
+        delete_lst = []
+        if self.extreme == True: # extreme case
+            for i in range(len(self.new_df)):
+                row = self.new_df.iloc[i, :]
+                labels = str.split(row['Finding Labels'], '|')
+                for lab in labels:  
+                    lab_idx = self.all_classes.index(lab)
+                    if lab_idx == 14: # No Finding
+                        continue
+                    if lab_idx == 2 or lab_idx == 7:
+                        if self.disease_cnt[lab_idx] > 1:
+                            delete_lst.append(i)
+                            break
+                    self.disease_cnt[lab_idx] += 1
+            self.new_df = self.new_df.drop(index=delete_lst, axis=0)
+            self.disease_cnt = [0]*14
+
         for i in range(len(self.new_df)):
             row = self.new_df.iloc[i, :]
             labels = str.split(row['Finding Labels'], '|')
@@ -477,4 +500,132 @@ class XRaysTrainDataset(Dataset):
         return train_val_list
 
     def __len__(self):
-        return len(self.the_chosen)
+        return len(self.new_df)
+
+class ChexpertTrainDataset(Dataset):
+
+    
+
+    def __init__(self, transform = None, indices = None):
+        
+        csv_path = "C:/Users/hb/Desktop/data/CheXpert-v1.0-small/train.csv"
+        self.dir = "C:/Users/hb/Desktop/data/"
+        self.transform = transform
+
+        self.all_data = pd.read_csv(csv_path)
+        self.all_data = self.all_data.drop(columns=['Sex','Age','AP/PA'])
+        self.all_data = self.all_data.drop(columns=['Support Devices', 'No Finding'])
+        # 'Pleural Effusion','Pleural Other',
+        self.all_data = self.all_data.fillna(0)
+        self.all_data = self.all_data.replace(-1,1) # U1
+        
+        self.frontal_data = self.all_data[self.all_data['Frontal/Lateral'] == 'Frontal']
+        self.selecte_data = self.all_data.iloc[indices, :]
+        # self.selecte_data.to_csv("C:/Users/hb/Desktop/data/CheXpert-v1.0-small/selected_data.csv")
+        self.class_num = 12
+        
+        
+    def get_ds_cnt(self):
+        total_ds_cnt = [0] * self.class_num
+        for i in range(len(self.selecte_data)):
+            row = self.selecte_data.iloc[i, 2:]
+            for j in range(len(row)):
+                total_ds_cnt[j] += int(row[j])
+        return total_ds_cnt
+
+    def __getitem__(self, index):
+
+        row = self.selecte_data.iloc[index, :]
+        # img = cv2.imread(self.dir + row['Path'])
+        img = pilimg.open(self.dir + row['Path'])
+        label = torch.FloatTensor(row[2:])
+        gray_img = self.transform(img)
+        return torch.cat([gray_img,gray_img,gray_img], dim = 0), label
+
+    def __len__(self):
+        return len(self.selecte_data)
+
+class ChexpertTestDataset(Dataset):
+
+    def __init__(self, transform = None):
+        
+        csv_path = "C:/Users/hb/Desktop/data/CheXpert-v1.0-small/valid.csv"
+        self.dir = "C:/Users/hb/Desktop/data/"
+        self.transform = transform
+
+        self.all_data = pd.read_csv(csv_path)
+        self.all_data = self.all_data.drop(columns=['Sex','Age','AP/PA'])
+        self.all_data = self.all_data.drop(columns=['Support Devices', 'No Finding'])
+        # ,'Pleural Effusion','Pleural Other'
+        self.all_data = self.all_data.fillna(0)
+        self.all_data = self.all_data.replace(-1,1)
+        
+        self.frontal_data = self.all_data[self.all_data['Frontal/Lateral'] == 'Frontal']
+        self.selecte_data = self.all_data.iloc[:, :]
+        # self.selecte_data.to_csv("C:/Users/hb/Desktop/data/CheXpert-v1.0-small/selected_data.csv")
+        self.class_num = 12
+
+    def __getitem__(self, index):
+
+        row = self.selecte_data.iloc[index, :]
+        img = pilimg.open(self.dir + row['Path'])
+        label = torch.FloatTensor(row[2:])
+        gray_img = self.transform(img)
+
+        return torch.cat([gray_img,gray_img,gray_img], dim = 0), label
+
+    def get_ds_cnt(self):
+        total_ds_cnt = [0] * self.class_num
+        for i in range(len(self.selecte_data)):
+            row = self.selecte_data.iloc[i, 2:]
+            for j in range(len(row)):
+                total_ds_cnt[j] += int(row[j])
+        return total_ds_cnt
+
+    def __len__(self):
+        return len(self.selecte_data)
+
+
+class CIFAR10TrainDataset(Dataset):
+
+    def __init__(self):
+        path = 'C:/Users/hb/Desktop/data/CIFAR10_Client_random/train.csv'
+        self.data = pd.read_csv(path)
+
+        self.transform = transforms.Compose([transforms.ToTensor(),
+                                  transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                                 ])
+
+    def __getitem__(self, index):
+        
+        row = self.data.iloc[index, :]
+        img = pilimg.open(row['path'])
+        label = torch.FloatTensor(row[2:])
+        img = self.transform(img)
+
+        return img, label
+
+    def __len__(self):
+        return len(self.data)
+
+class CIFAR10TestDataset(Dataset):
+
+    def __init__(self):
+        path = 'C:/Users/hb/Desktop/data/CIFAR10_Client_random/test.csv'
+        self.data = pd.read_csv(path)
+
+        self.transform = transforms.Compose([transforms.ToTensor(),
+                                  transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                                 ])
+
+    def __getitem__(self, index):
+        
+        row = self.data.iloc[index, :]
+        img = pilimg.open(row['path'])
+        label = torch.FloatTensor(row[2:])
+        img = self.transform(img)
+
+        return img, label
+
+    def __len__(self):
+        return len(self.data)

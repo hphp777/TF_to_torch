@@ -232,16 +232,16 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
         
         optimizer.zero_grad()    
         # t_feats, out = model.extract_feature(img)
-        out = model(img)  
+        out = torch.log_softmax(model(img), dim=1)  
+        print(out)
         loss = loss_fn(out, target)
-        # sig_out = sigmoid(out)
-        # loss = loss_fn(sig_out, target)
-        loss_ori = loss
         running_train_loss += loss*img.shape[0]
         train_loss_list.append(loss.item())
-        # weighted
-        # train_loss_list.append(loss.cpu().detach().numpy())
-
+        ###########################################
+        prediction = out.max(1, keepdim=True)[1]
+        print(label.view_as(prediction))
+        correct += prediction.eq(label.view_as(prediction)).sum().item()
+        ###############################################
         preds = np.round(sigmoid(out).cpu().detach().numpy())
         targets = target.cpu().detach().numpy()
 
@@ -253,85 +253,8 @@ def train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now
         loss.backward()
         optimizer.step()
 
-        # if algorithm == 'FedAlign':
-        #     loss_CE = loss.item()
 
-        #     t = t_feats[-2].detach()
-        #     x2 = t[:, :make_divisible(t.shape[1]*0.25)] # 마지막 에서 두번 째 블록
-        #     x3 = model.layer4(t).detach()
-        #     s_feats = [x2, x3]
-        #     # s_feats = model.reuse_feature(t)
-        #     TM_s = torch.bmm(transmitting_matrix(s_feats[-2], s_feats[-1]), transmitting_matrix(s_feats[-2], s_feats[-1]).transpose(2,1)) # small block
-        #     TM_t = torch.bmm(transmitting_matrix(t_feats[-2].detach(), t_feats[-1].detach()), transmitting_matrix(t_feats[-2].detach(), t_feats[-1].detach()).transpose(2,1)) # big block
-        #     loss = F.mse_loss(top_eigenvalue(K=TM_s), top_eigenvalue(K=TM_t))
-        #     loss = 0.45*(loss_CE/loss.item())*loss
-        #     loss.requires_grad_(True)
-        #     loss.backward()
         
-        if (batch_idx+1)%log_interval == 0:
-            # batch metric evaluation
-# #             out_detached = out.detach()
-# #             batch_roc_auc_score = get_roc_auc_score(target, out_detached.numpy())
-            # 'out' is a torch.Tensor and 'roc_auc_score' function first tries to convert it into a numpy array, but since 'out' has requires_grad = True, it throws an error
-            # RuntimeError: Can't call numpy() on Variable that requires grad. Use var.detach().numpy() instead. 
-            # so we have to 'detach' the 'out' tensor and then convert it into a numpy array to avoid the error !  
-
-            batch_time = time.time() - start_time
-            m, s = divmod(batch_time, 60)
-            print('Train Loss for batch {}/{} @epoch{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(train_loader)).zfill(3), epochs_till_now, round(loss.item(), 5), int(m), round(s, 2)))
-        start_time = time.time()
-
-    print("Training Accuracy: ", correct/total)
-            
-    return train_loss_list, running_train_loss/float(len(train_loader.dataset))
-
-def train_epoch_CIFAR(device, train_loader, model, loss_fn, optimizer, epochs_till_now, log_interval):
-    '''
-    Takes in the data from the 'train_loader', calculates the loss over it using the 'loss_fn' 
-    and optimizes the 'model' using the 'optimizer'  
-    
-    Also prints the loss and the ROC AUC score for the batches, after every 'log_interval' batches. 
-    '''
-     
-    model.train()
-    class_num = 10
-    running_train_loss = 0
-    train_loss_list = []
-
-    sigmoid = torch.nn.Sigmoid()
-    total = 0
-    correct = 0
-
-    start_time = time.time()
-    for batch_idx, (img, target) in enumerate(train_loader):
-        # print(type(img), img.shape) # , np.unique(img))
-
-        img = img.to(device)
-        target = target.float().to(device)
-
-        if torch.sum(target) == 0:
-            continue
-        
-        optimizer.zero_grad()    
-
-        out = torch.log_softmax(model(img), dim=1)
-        target = torch.argmax(target, dim=1)
-        loss = loss_fn(out, target)
-
-        running_train_loss += loss*img.shape[0]
-        train_loss_list.append(loss.item())
-        ###########################################
-        prediction = out.max(1, keepdim=True)[1] # index
-        ###############################################
-        preds = prediction.squeeze().cpu().detach().numpy()
-        targets = target.cpu().detach().numpy()
-
-        total += len(targets)
-        correct += (preds == targets).sum()
-
-        loss.backward()
-        optimizer.step()
-
         if (batch_idx+1)%log_interval == 0:
 
             batch_time = time.time() - start_time
@@ -339,8 +262,6 @@ def train_epoch_CIFAR(device, train_loader, model, loss_fn, optimizer, epochs_ti
             print('Train Loss for batch {}/{} @epoch{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(train_loader)).zfill(3), epochs_till_now, round(loss.item(), 5), int(m), round(s, 2)))
         start_time = time.time()
 
-    print(total)
-    print(correct)
     print("Training Accuracy: ", correct/total)
             
     return train_loss_list, running_train_loss/float(len(train_loader.dataset))
@@ -353,7 +274,7 @@ def val_epoch(device, val_loader, model, loss_fn, epochs_till_now = None, log_in
     It also prints the loss and the ROC AUC score for every 'log_interval'th batch, only when 'test_only' is False
     '''
     model.eval()
-    class_num = 1
+    class_num = 12
     running_val_loss = 0
     val_loss_list = []
     val_loader_examples_num = len(val_loader.dataset)
@@ -424,78 +345,7 @@ def val_epoch(device, val_loader, model, loss_fn, epochs_till_now = None, log_in
     #     roc_auc = roc_auc_score(gt, probs)
     # except:
     #     roc_auc = 0
-    roc_auc = roc_auc_score(gt, probs)
 
-    return val_loss_list, running_val_loss/float(len(val_loader.dataset)), roc_auc, accuracy
-
-def val_epoch_CIFAR(device, val_loader, model, loss_fn, epochs_till_now = None, log_interval = 1, test_only = False):
-    '''
-    It essentially takes in the val_loader/test_loader, the model and the loss function and evaluates
-    the loss and the ROC AUC score for all the data in the dataloader.
-    
-    It also prints the loss and the ROC AUC score for every 'log_interval'th batch, only when 'test_only' is False
-    '''
-    model.eval()
-    class_num = 1
-    running_val_loss = 0
-    val_loss_list = []
-    val_loader_examples_num = len(val_loader.dataset)
-
-    # probs = np.zeros((val_loader_examples_num, 14), dtype = np.float32)
-    # gt    = np.zeros((val_loader_examples_num, 14), dtype = np.float32)
-
-    probs = np.zeros((val_loader_examples_num, class_num), dtype = np.float32)
-    gt    = np.zeros((val_loader_examples_num, class_num), dtype = np.float32)
-    k=0
-
-    total = 0
-    correct = 0
-    total_target = []
-    total_preds = []
-
-    with torch.no_grad():
-        batch_start_time = time.time()    
-        for batch_idx, (img, target) in enumerate(val_loader):
-            if test_only:
-                per = ((batch_idx+1)/len(val_loader))*100
-                a_, b_ = divmod(per, 1)
-                print(f'{str(batch_idx+1).zfill(len(str(len(val_loader))))}/{str(len(val_loader)).zfill(len(str(len(val_loader))))} ({str(int(a_)).zfill(2)}.{str(int(100*b_)).zfill(2)} %)', end = '\r')
-    #         print(type(img), img.shape) # , np.unique(img))
-
-            img = img.to(device)
-            target = target.to(device)    
-    
-            out = torch.log_softmax(model(img), dim=1)        
-            target = torch.argmax(target, dim=1)
-            loss = loss_fn(out, target)    
-            prediction = out.max(1, keepdim=True)[1] # index
-            ###############################################
-            preds = prediction.squeeze().cpu().detach().numpy()
-            targets = target.cpu().detach().numpy()
-
-            total += len(targets)
-            correct += (preds == targets).sum()
-
-            running_val_loss += loss.item()*img.shape[0]
-            # val_loss_list.append(loss.item())
-            # weighted
-            val_loss_list.append(loss.cpu().detach().numpy())
-
-            if ((batch_idx+1)%log_interval == 0) and (not test_only): # only when ((batch_idx + 1) is divisible by log_interval) and (when test_only = False)
-                # batch metric evaluation
-#                 batch_roc_auc_score = get_roc_auc_score(target, out)
-
-                batch_time = time.time() - batch_start_time
-                m, s = divmod(batch_time, 60)
-                print('Val Loss   for batch {}/{}: {} in {} mins {} secs'.format(str(batch_idx+1).zfill(3), str(len(val_loader)).zfill(3), round(loss.item(), 5), int(m), round(s, 2)))
-            
-            batch_start_time = time.time()  
-            
-    # metric scenes
-    print(total)
-    print(correct)
-    accuracy = correct/total
-    print("Test Accuracy: ", correct/total)
 
     return val_loss_list, running_val_loss/float(len(val_loader.dataset)), accuracy
 
@@ -513,11 +363,11 @@ def fit(device, train_loader, val_loader, test_loader, model,
     if test_only:
         print('\n======= Testing... =======\n')
         test_start_time = time.time()
-        test_loss, mean_running_test_loss, test_roc_auc, test_acc = val_epoch(device, test_loader, model, loss_fn, log_interval, test_only = test_only)
+        test_loss, mean_running_test_loss, test_acc = val_epoch(device, test_loader, model, loss_fn, log_interval, test_only = test_only)
         total_test_time = time.time() - test_start_time
         m, s = divmod(total_test_time, 60)
-        print('test_roc_auc: {} in {} mins {} secs'.format(test_roc_auc, int(m), int(s)))
-        return test_roc_auc, test_acc
+        print('test_roc_auc: {} in {} mins {} secs'.format(int(m), int(s)))
+        return 0, test_acc
         sys.exit()
 
     starting_epoch  = epochs_till_now
@@ -534,63 +384,7 @@ def fit(device, train_loader, val_loader, test_loader, model,
     print('TRAINING')
     train_loss, mean_running_train_loss = train_epoch(device, train_loader, model, loss_fn, optimizer, epochs_till_now, log_interval)
     print('VALIDATION')
-    val_loss, mean_running_val_loss, roc_auc, val_acc = val_epoch(device, val_loader, model, loss_fn, epochs_till_now, log_interval)
-        
-    epoch_train_loss.append(mean_running_train_loss)
-    epoch_val_loss.append(mean_running_val_loss)
-
-    total_train_loss_list.extend(train_loss)
-    total_val_loss_list.extend(val_loss)
-
-    save_name = 'temp.pth'
-
-    # the follwoing piece of codw needs to be worked on !!! LATEST DEVELOPMENT TILL HERE
-    print('\nTRAIN LOSS : {}'.format(mean_running_train_loss))
-    print('VAL   LOSS : {}'.format(mean_running_val_loss))
-    print('VAL ROC_AUC: {}'.format(roc_auc))
-
-    total_epoch_time = time.time() - epoch_start_time
-    m, s = divmod(total_epoch_time, 60)
-    h, m = divmod(m, 60)
-    print('\nEpoch {} took {} h {} m'.format(epochs_till_now,int(h), int(m)))
-
-    return model.state_dict()
-
-def fit_CIFAR(device, train_loader, val_loader, test_loader, model,
-                                         loss_fn, optimizer, losses_dict,
-                                         epochs_till_now, 
-                                         log_interval, save_interval, 
-                                         test_only = False, c_num = None):
-    '''
-    Trains or Tests the 'model' on the given 'train_loader', 'val_loader', 'test_loader' for 'epochs' number of epochs.
-    If training ('test_only' = False), it saves the optimized 'model' and  the loss plots ,after every 'save_interval'th epoch.
-    '''
-    epoch_train_loss, epoch_val_loss, total_train_loss_list, total_val_loss_list = losses_dict['epoch_train_loss'], losses_dict['epoch_val_loss'], losses_dict['total_train_loss_list'], losses_dict['total_val_loss_list']
-
-    if test_only:
-        print('\n======= Testing... =======\n')
-        test_start_time = time.time()
-        test_loss, mean_running_test_loss, test_acc = val_epoch_CIFAR(device, test_loader, model, loss_fn, log_interval, test_only = test_only)
-        total_test_time = time.time() - test_start_time
-        m, s = divmod(total_test_time, 60)
-        return 0, test_acc
-        sys.exit()
-
-    starting_epoch  = epochs_till_now
-    # print('\n======= Training after epoch #{}... =======\n'.format(epochs_till_now))
-
-    # epoch_train_loss = []
-    # epoch_val_loss = []
-    
-    # total_train_loss_list = []
-    # total_val_loss_list = []
-    epoch_start_time = time.time()
-    
-    # outputs_async = pool.map_async(train_epoch, inputs)
-    print('TRAINING')
-    train_loss, mean_running_train_loss = train_epoch_CIFAR(device, train_loader, model, loss_fn, optimizer, epochs_till_now, log_interval)
-    print('VALIDATION')
-    val_loss, mean_running_val_loss, val_acc = val_epoch_CIFAR(device, val_loader, model, loss_fn, epochs_till_now, log_interval)
+    val_loss, mean_running_val_loss, val_acc = val_epoch(device, val_loader, model, loss_fn, epochs_till_now, log_interval)
         
     epoch_train_loss.append(mean_running_train_loss)
     epoch_val_loss.append(mean_running_val_loss)
@@ -610,37 +404,3 @@ def fit_CIFAR(device, train_loader, val_loader, test_loader, model,
     print('\nEpoch {} took {} h {} m'.format(epochs_till_now,int(h), int(m)))
 
     return model.state_dict()
-
-'''   
-def pred_n_write(test_loader, model, save_name):
-    res = np.zeros((3000, 14), dtype = np.float32)
-    k=0
-    for batch_idx, img in tqdm.tqdm(enumerate(test_loader)):
-        model.eval()
-        with torch.no_grad():
-            pred = torch.sigmoid(model(img))
-            # print(k)
-            res[k: k + pred.shape[0], :] = pred
-            k += pred.shape[0]
-            
-    # write csv
-    print('populating the csv')
-    submit = pd.DataFrame()
-    submit['ImageID'] = [str.split(i, os.sep)[-1] for i in test_loader.dataset.data_list]
-    with open('disease_classes.pickle', 'rb') as handle:
-        disease_classes = pickle.load(handle)
-    
-    for idx, col in enumerate(disease_classes):
-        if col == 'Hernia':
-            submit['Hern'] = res[:, idx]
-        elif col == 'Pleural_Thickening':
-            submit['Pleural_thickening'] = res[:, idx]
-        elif col == 'No Finding':
-            submit['No_findings'] = res[:, idx]
-        else:
-            submit[col] = res[:, idx]
-    rand_num = str(random.randint(1000, 9999))
-    csv_name = '{}___{}.csv'.format(save_name, rand_num)
-    submit.to_csv('res/' + csv_name, index = False)
-    print('{} saved !'.format(csv_name))
-'''
