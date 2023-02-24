@@ -307,7 +307,7 @@ def train_epoch_CIFAR(device, train_loader, model, loss_fn, optimizer, epochs_ti
         # print(type(img), img.shape) # , np.unique(img))
 
         img = img.to(device)
-        target = target.float().to(device)
+        target = target.type(torch.LongTensor).to(device)
 
         if torch.sum(target) == 0:
             continue
@@ -315,7 +315,7 @@ def train_epoch_CIFAR(device, train_loader, model, loss_fn, optimizer, epochs_ti
         optimizer.zero_grad()    
 
         out = torch.log_softmax(model(img), dim=1)
-        target = torch.argmax(target, dim=1)
+        # target = torch.argmax(target, dim=1)
         loss = loss_fn(out, target)
 
         running_train_loss += loss*img.shape[0]
@@ -463,10 +463,10 @@ def val_epoch_CIFAR(device, val_loader, model, loss_fn, epochs_till_now = None, 
     #         print(type(img), img.shape) # , np.unique(img))
 
             img = img.to(device)
-            target = target.to(device)    
+            target = target.type(torch.LongTensor).to(device)    
     
             out = torch.log_softmax(model(img), dim=1)        
-            target = torch.argmax(target, dim=1)
+            # target = torch.argmax(target, dim=1)
             loss = loss_fn(out, target)    
             prediction = out.max(1, keepdim=True)[1] # index
             ###############################################

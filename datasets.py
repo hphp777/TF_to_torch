@@ -17,6 +17,9 @@ import pandas as pd
 import config
 import PIL.Image as pilimg
 from multiprocessing import Pool
+from torchvision.datasets import CIFAR10
+from torchvision.datasets import CIFAR100
+import torch.utils.data as data
 
  
 class GANLoader(Dataset):
@@ -585,47 +588,213 @@ class ChexpertTestDataset(Dataset):
     def __len__(self):
         return len(self.selecte_data)
 
+def check_version(cifar_version):
+    if cifar_version not in ['10', '100', '20']:
+        raise ValueError('cifar version must be one of 10, 20, 100.')
 
-class CIFAR10TrainDataset(Dataset):
+def img_num(cifar_version):
+    check_version(cifar_version)
+    dt = {'10': 5000, '100': 500, '20': 2500}
+    return dt[cifar_version]
 
-    def __init__(self):
-        path = 'C:/Users/hb/Desktop/data/CIFAR10_Client_random/train.csv'
-        self.data = pd.read_csv(path)
+def get_img_num_per_cls(cifar_version, imb_factor=0.5):
+    """
+    Get a list of image numbers for each class, given cifar version
+    Num of imgs follows emponential distribution
+    img max: 5000 / 500 * e^(-lambda * 0);
+    img min: 5000 / 500 * e^(-lambda * int(cifar_version - 1))
+    exp(-lambda * (int(cifar_version) - 1)) = img_max / img_min
+    args:
+      cifar_version: str, '10', '100', '20'
+      imb_factor: float, imbalance factor: img_min/img_max,
+        None if geting default cifar data number
+    output:
+      img_num_per_cls: a list of number of images per class
+    """
+    cls_num = int(cifar_version)
+    img_max = img_num(cifar_version)
+    if imb_factor is None:
+        return [img_max] * cls_num
+    img_num_per_cls = []
+    for cls_idx in range(cls_num):
+        num = img_max * (imb_factor**(cls_idx / (cls_num - 1.0)))
+        img_num_per_cls.append(int(num))
+    return img_num_per_cls
 
-        self.transform = transforms.Compose([transforms.ToTensor(),
-                                  transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                                 ])
+def _data_transforms_cifar(datadir):
+    if "cifar100" in datadir:
+        CIFAR_MEAN = [0.5071, 0.4865, 0.4409]
+        CIFAR_STD = [0.2673, 0.2564, 0.2762]
+    else:
+        CIFAR_MEAN = [0.49139968, 0.48215827, 0.44653124]
+        CIFAR_STD = [0.24703233, 0.24348505, 0.26158768]
+
+    train_transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
+    ])
+
+    valid_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
+    ])
+
+    return train_transform, valid_transform
+
+class CIFAR_truncated(data.Dataset):
+
+    def __init__(self, root, dataidxs=None, train=True, transform=None, target_transform=None, download=False):
+
+        self.root = root
+        self.dataidxs = dataidxs
+        self.train = train
+        self.transform = transform
+        self.target_transform = target_transform
+        self.download = download
+
+        self.data, self.target = self.__build_truncated_dataset__()
+
+    def __build_truncated_dataset__(self):
+        print("download = " + str(self.download))
+        if "cifar100" in self.root:
+            cifar_dataobj = CIFAR100(self.root, self.train, self.transform, self.target_transform, self.download)
+        else:
+            cifar_dataobj = CIFAR10(self.root, self.train, self.transform, self.target_transform, self.download)
+
+
+        if self.train:
+            # print("train member of the class: {}".format(self.train))
+            # data = cifar_dataobj.train_data
+            data = cifar_dataobj.data
+            target = np.array(cifar_dataobj.targets)
+        else:
+            data = cifar_dataobj.data
+            target = np.array(cifar_dataobj.targets)
+
+        if self.dataidxs is not None:
+            print(self.dataidxs)
+            data = data[self.dataidxs]
+            target = target[self.dataidxs]
+
+        return data, target
+
+    def truncate_channel(self, index):
+        for i in range(index.shape[0]):
+            gs_index = index[i]
+            self.data[gs_index, :, :, 1] = 0.0
+            self.data[gs_index, :, :, 2] = 0.0
 
     def __getitem__(self, index):
-        
-        row = self.data.iloc[index, :]
-        img = pilimg.open(row['path'])
-        label = torch.FloatTensor(row[2:])
-        img = self.transform(img)
+        """
+        Args:
+            index (int): Index
 
-        return img, label
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.target[index]
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
 
     def __len__(self):
         return len(self.data)
 
-class CIFAR10TestDataset(Dataset):
+def load_data(datadir):
 
-    def __init__(self):
-        path = 'C:/Users/hb/Desktop/data/CIFAR10_Client_random/test.csv'
-        self.data = pd.read_csv(path)
+    train_transform, test_transform = _data_transforms_cifar(datadir)
+    dl_obj = CIFAR_truncated
+    train_ds = dl_obj(datadir, train=True, download=True, transform=train_transform)
+    test_ds = dl_obj(datadir, train=False, download=True, transform=test_transform)
 
-        self.transform = transforms.Compose([transforms.ToTensor(),
-                                  transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                                 ])
+    y_train, y_test = train_ds.target, test_ds.target
 
-    def __getitem__(self, index):
+    return (y_train, y_test)
+
+def get_dataloader(datadir, train_bs, test_bs, dataidxs=None):
+
+    ################datadir is the key to discern the dataset#######################
+    train_transform, test_transform = _data_transforms_cifar(datadir)
+    dl_obj = CIFAR_truncated
+    workers=0
+    persist=False
+
+    CIFAR10Train = dl_obj(datadir, dataidxs=dataidxs, train=True, transform=train_transform, download=True)
+    test_ds = dl_obj(datadir, train=False, transform=test_transform, download=True)
+    
+    train_percentage = 0.8
+    train_ds ,valid_ds= torch.utils.data.random_split(CIFAR10Train, [int(len(CIFAR10Train)*train_percentage), len(CIFAR10Train)-int(len(CIFAR10Train)*train_percentage)])
+    
+    train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, shuffle=True, drop_last=True, num_workers=workers, persistent_workers=persist)
+    valid_dl = data.DataLoader(dataset=valid_ds, batch_size=train_bs, shuffle=True, drop_last=True, num_workers=workers, persistent_workers=persist)
+    test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False, drop_last=True, num_workers=workers, persistent_workers=persist)
+
+    return train_dl, valid_dl, test_dl
+
+def get_cifar10(data_dir, batch_size):
+    
+    long_tail = get_img_num_per_cls('10')
+    y_train, y_test = load_data(data_dir)
+    idxs = np.array([])
+
+    for k in range(10): # partition for the class k
+        idx_k = np.where(y_train == k)[0]
+        np.random.shuffle(idx_k)
+        idx_k = idx_k[:long_tail[k]]
+        idxs = np.concatenate((idxs,np.array(idx_k)))
+
+    train_data, valid_data , test_data = get_dataloader(data_dir, batch_size, batch_size, dataidxs=idxs.astype(int))
+
+    return train_data, valid_data, test_data
+
+# class CIFAR10TrainDataset(Dataset):
+
+#     def __init__(self):
+#         path = 'C:/Users/hb/Desktop/data/CIFAR10_Client_random/train.csv'
+#         self.data = pd.read_csv(path)
+
+#         self.transform = transforms.Compose([transforms.ToTensor(),
+#                                   transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+#                                  ])
+
+#     def __getitem__(self, index):
         
-        row = self.data.iloc[index, :]
-        img = pilimg.open(row['path'])
-        label = torch.FloatTensor(row[2:])
-        img = self.transform(img)
+#         row = self.data.iloc[index, :]
+#         img = pilimg.open(row['path'])
+#         label = torch.FloatTensor(row[2:])
+#         img = self.transform(img)
 
-        return img, label
+#         return img, label
 
-    def __len__(self):
-        return len(self.data)
+#     def __len__(self):
+#         return len(self.data)
+
+# class CIFAR10TestDataset(Dataset):
+
+#     def __init__(self):
+#         path = 'C:/Users/hb/Desktop/data/CIFAR10_Client_random/test.csv'
+#         self.data = pd.read_csv(path)
+
+#         self.transform = transforms.Compose([transforms.ToTensor(),
+#                                   transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+#                                  ])
+
+#     def __getitem__(self, index):
+        
+#         row = self.data.iloc[index, :]
+#         img = pilimg.open(row['path'])
+#         label = torch.FloatTensor(row[2:])
+#         img = self.transform(img)
+
+#         return img, label
+
+#     def __len__(self):
+#         return len(self.data)

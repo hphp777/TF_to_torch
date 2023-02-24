@@ -16,8 +16,7 @@ importlib.reload(models)
 from torch.optim.lr_scheduler import LambdaLR, StepLR, MultiStepLR, ExponentialLR
 
 # import custom dataset classes
-from datasets import XRaysTestDataset, XRaysTrainDataset, GANLoader, ChexpertTrainDataset, ChexpertTestDataset, CIFAR10TestDataset, CIFAR10TrainDataset
-
+from datasets import XRaysTestDataset, XRaysTrainDataset, GANLoader, ChexpertTrainDataset, ChexpertTestDataset, get_cifar10
 
 # import neccesary libraries for defining the optimizers
 import torch.optim as optim
@@ -26,6 +25,7 @@ from trainer import fit_CIFAR
 import config
 
 import warnings
+
 
 warnings.filterwarnings(action='ignore')
 
@@ -181,12 +181,20 @@ if __name__ == '__main__':
         discard_percentage = 0.3
         train_dataset, discard = torch.utils.data.random_split(Total_dataset, [int(len(Total_dataset)*discard_percentage), len(Total_dataset)-int(len(Total_dataset)*discard_percentage)])
         test_percentage = 0.5
+        batch_size = args.bs # 128 by default
         val_dataset, test_dataset = torch.utils.data.random_split(temp, [int(len(temp)*test_percentage), len(temp)-int(len(temp)*test_percentage)])
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, num_workers = 4)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = batch_size, shuffle = not True, num_workers = 4)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = not True, num_workers = 4)
     elif args.dataset == 'CIFAR10':
-        CIFAR10Train = CIFAR10TrainDataset()
-        test_dataset = CIFAR10TestDataset()
+        train_loader, val_loader, test_loader = get_cifar10('data/cifar10',args.bs)
         train_percentage = 0.8
-        train_dataset, val_dataset = torch.utils.data.random_split(CIFAR10Train, [int(len(CIFAR10Train)*train_percentage), len(CIFAR10Train)-int(len(CIFAR10Train)*train_percentage)])
+        
+    print('\n-----Dataset Information-----')
+    print('num images in train_dataset   : {}'.format(len(train_loader) * args.bs))
+    print('num images in val_dataset     : {}'.format(len(val_loader) * args.bs))
+    print('num images in XRayTest_dataset: {}'.format(len(test_loader) * args.bs))
+    print('-------------------------------------')
 
 
     if args.dataset == 'NIH' or args.dataset == 'ChexPert':
@@ -247,17 +255,10 @@ if __name__ == '__main__':
     # XRayTest_dataset = ChestXTestLoader()
     # XRayTest_dataset = ChestXLoader(mode = 'test')
 
-    print('\n-----Dataset Information-----')
-    print('num images in train_dataset   : {}'.format(len(train_dataset)))
-    print('num images in val_dataset     : {}'.format(len(val_dataset)))
-    print('num images in XRayTest_dataset: {}'.format(len(test_dataset)))
-    print('-------------------------------------')
 
     # make the dataloaders
-    batch_size = args.bs # 128 by default
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = batch_size, shuffle = True, num_workers = 4)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = batch_size, shuffle = not True, num_workers = 4)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = batch_size, shuffle = not True, num_workers = 4)
+    
+    
     # train2_loader = torch.utils.data.DataLoader(GANTrain_dataset, batch_size = batch_size, shuffle = not True)
  
     if args.loss_func == 'FocalLoss': # by default
@@ -305,16 +306,34 @@ if __name__ == '__main__':
 
     # model.load_state_dict(torch.load('C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/EfficientNetB0.pth'))
 
-    round = 10
+    round = 20
     best_auc = 0
+    best_acc = 0
     
     if args.dataset == 'CIFAR10':
-        fit_CIFAR(device, train_loader, val_loader,    
+        for i in range(1,round+1):
+            print('============ EPOCH {}/{} ============'.format(i, round))
+            lr = scheduler(i)
+            print("Learning Rate : ", lr)
+            weight = fit_CIFAR(device, train_loader, val_loader,    
                                         test_loader, model, loss_fn, 
                                         optimizer, losses_dict,
                                         epochs_till_now = 0, 
                                         log_interval = 25, save_interval = 1,
+                                        test_only = False)
+
+            model.load_state_dict(weight)
+    
+            test_auc, test_acc = fit_CIFAR(device, train_loader, val_loader,    
+                                        test_loader, model, loss_fn, 
+                                        optimizer, losses_dict,
+                                        epochs_till_now = i, 
+                                        log_interval = 25, save_interval = 1,
                                         test_only = True)
+
+            if test_auc > best_auc:
+                best_acc = test_acc
+                torch.save(weight,'C:/Users/hb/Desktop/code/2.TF_to_Torch/Weight/cifar10_CZ.pth')
 
     for i in range(1,round+1):
 
